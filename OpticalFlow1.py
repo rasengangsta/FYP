@@ -3,6 +3,7 @@
 
 from copy import deepcopy
 
+import math
 import numpy as np
 import cv2
 import cv
@@ -19,15 +20,14 @@ def nothing(x):
 
 def drawProcessedImage(img, lines, outlyingFlowPoints):
     vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)    
-    for j in range(len(outlyingFlowPoints)):
-        for i in range(len(lines[j])):
-            point1 = (lines[j][i][0][0], lines[j][i][0][1])
-            point2 = (lines[j][i][1][0], lines[j][i][1][1])
-            cv2.line(vis, point1, point2, (0, 255, 0), 1) 
-            if i in outlyingFlowPoints[j]:
-                point1 = (lines[j][i][0][0], lines[j][i][0][1])
-                point2 = (point1[0] + 5, point1[1] + 5)
-                cv2.rectangle(vis, point1, point2, (255, 0, 0), thickness=8, lineType=8, shift=0)        
+    for i in range(len(lines)):
+        point1 = (lines[i][0][0], lines[i][0][1])
+        point2 = (lines[i][1][0], lines[i][1][1])
+        cv2.line(vis, point1, point2, (0, 255, 0), 1) 
+        if i in outlyingFlowPoints:
+            point1 = (lines[i][0][0], lines[i][0][1])
+            point2 = (point1[0] + 5, point1[1] + 5)
+            cv2.rectangle(vis, point1, point2, (255, 0, 0), thickness=8, lineType=8, shift=0)        
     return vis
 
 def differentiateFlow(lines, smoothingConstant):
@@ -95,7 +95,19 @@ def quadrantLines(lines):
         elif (line[0][0] > 358 and line[0][1] > 235):    
             botRight.append(line)
     return (topLeft, topRight, botLeft, botRight)
-            
+
+def gaussianOfXY(x, y, xCenter, yCenter, sigma):
+    f = ((x-xCenter)**2) / (2*sigma)
+    g = ((y-yCenter)**2) / (2*sigma)
+    exponent = 2*math.exp(-(f+g))
+    return exponent
+
+def adjustVectorsForCentrality(lines, sigma):
+    for line in lines:
+        gause = gaussianOfXY(line[0][0], line[0][1], 358, 235, sigma)
+        line[1][0] = line[0][0] + ((line[1][0] - line[0][0]) * gause)
+        line[1][1] = line[0][1] + ((line[1][1] - line[0][1]) * gause)       
+        
 if __name__ == '__main__':   
     print help_message
     try: fn = sys.argv[1]
@@ -103,7 +115,7 @@ if __name__ == '__main__':
     cam = cv2.VideoCapture( 'C:\Users\David\Desktop\L2L.avi' )
     fourcc = cv2.cv.CV_FOURCC(*'I420')
     frameDimensions = (int(cam.get(cv.CV_CAP_PROP_FRAME_WIDTH)), int(cam.get(cv.CV_CAP_PROP_FRAME_HEIGHT)))
-    out = cv2.VideoWriter('boxe37.avi',fourcc, 10.0, frameDimensions)
+    out = cv2.VideoWriter('boxe43.avi',fourcc, 10.0, frameDimensions)
     print("Output file opened: " + str(out.isOpened()))
     ret, prev = cam.read()
     prevGray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
@@ -111,14 +123,25 @@ if __name__ == '__main__':
     cv2.createTrackbar('Threshold','image',1,20,nothing)
     cv2.createTrackbar('Coefficient','image',1,20,nothing)
     cv2.createTrackbar('Vectors','image',6,40,nothing)
-    
+    cv2.createTrackbar('Centrality','image',1,100000,nothing)
+    frame_num = 0;
+    num_to_skip = 600;
     while True:
+        
 
+        print("Output file opened: " + str(out.isOpened()))
         threshold = cv2.getTrackbarPos('Threshold','image')
         coefficient = cv2.getTrackbarPos('Coefficient','image')
         step = cv2.getTrackbarPos('Vectors','image')
-       
+        centralityConstant = float(cv2.getTrackbarPos('Centrality','image'))
         ret, img = cam.read()
+        frame_num += 1
+        if ( frame_num < num_to_skip ):
+            continue
+        if(frame_num == 2000):
+            print("Finnished processing...")
+            out.release()
+            break     
         
         if (img is None):
             print("Finnished processing...")
@@ -133,14 +156,13 @@ if __name__ == '__main__':
         fx, fy = flow[y,x].T
         lines = np.vstack([x, y, x+fx, y+fy]).T.reshape(-1, 2, 2)
         lines = np.int32(lines + 0.1)
-        quads = quadrantLines(lines)
-        outlyingFlowPointList = [0]*len(quads)
+        adjustVectorsForCentrality(lines, centralityConstant)
         
-        for i in range(len(quads)):
-            diffX, diffY = differentiateFlow(quads[i], coefficient)
-            outlyingFlowPointList[i] = (findOutliers(diffX, diffY, threshold))
+       
+        diffX, diffY = differentiateFlow(lines, coefficient)
+        outlyingFlowPoints = (findOutliers(diffX, diffY, threshold))
             
-        flowImage = drawProcessedImage(gray, quads, outlyingFlowPointList)
+        flowImage = drawProcessedImage(gray, lines, outlyingFlowPoints)
         cv2.imshow('flow', flowImage)
         ch = 0xFF & cv2.waitKey(5)
         
